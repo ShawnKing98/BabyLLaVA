@@ -295,7 +295,8 @@ conv_llava_plain = Conversation(
     ),
     offset=0,
     sep_style=SeparatorStyle.PLAIN,
-    sep="\n",
+    sep="",
+    sep2=""
 )
 
 conv_llava_v0 = Conversation(
@@ -393,4 +394,7 @@ conv_templates = {
 
 
 if __name__ == "__main__":
-    print(default_conversation.get_prompt())
+    conv = default_conversation.copy()
+    conv.append_message(conv.roles[0], "Answer my question!")
+    conv.append_message(conv.roles[1], "Sure, the answer is 42.")
+    print(conv.get_prompt())

@@ -1,4 +1,7 @@
 import os
+import time
+from datetime import timedelta
+import logging
 import torch
 import torch.nn as nn
 
@@ -13,7 +16,6 @@ from transformers.trainer import (
     logger,
 )
 from typing import List, Optional
-
 
 def maybe_zero_3(param, ignore_status=False, name=None):
     from deepspeed import zero
@@ -132,6 +134,28 @@ class LengthGroupedSampler(Sampler):
 
 class LLaVATrainer(Trainer):
 
+    def __init__(self, eval_tasks=None, limit_val_batches=100, *args, **kwargs):
+        super(LLaVATrainer, self).__init__(*args, **kwargs)
+        # run-time downstream task evaluation setup
+        self.eval_tasks = eval_tasks
+        if self.eval_tasks is not None:
+            import lm_eval
+            from lm_eval.models.huggingface import LlavaLM
+            from lm_eval.tasks import TaskManager, get_task_dict
+
+            self.limit_val_batches = limit_val_batches
+            task_manager = TaskManager('ERROR')
+            self.task_group_dict = {task_group: get_task_dict(task_group, task_manager) for task_group in eval_tasks}
+            for task_dict in self.task_group_dict.values():
+                for task_name, task_obj in task_dict.items():
+                    if isinstance(task_obj, tuple):
+                        _, task_obj = task_obj
+                        if task_obj is None:
+                            continue
+                    # if the task does not define a default one, default to 0
+                    if (default_num_fewshot := task_obj.get_config("num_fewshot")) is None:
+                        task_obj.set_config(key="num_fewshot", value=0)
+
     def _get_train_sampler(self) -> Optional[torch.utils.data.Sampler]:
         if self.train_dataset is None or not has_length(self.train_dataset):
             return None
@@ -229,6 +253,8 @@ class LLaVATrainer(Trainer):
 
     def _save_checkpoint(self, model, trial, metrics=None):
         if getattr(self.args, 'tune_mm_mlp_adapter', False):
+            model.generation_config.do_sample = True
+            super(LLaVATrainer, self)._save_checkpoint(model, trial, metrics)
             from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
             checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
 
@@ -244,6 +270,7 @@ class LLaVATrainer(Trainer):
 
             if self.args.local_rank == 0 or self.args.local_rank == -1:
                 self.model.config.save_pretrained(output_dir)
+                self.save_model(output_dir, _internal_call=True)
                 torch.save(weight_to_save, os.path.join(output_dir, f'mm_projector.bin'))
         else:
             super(LLaVATrainer, self)._save_checkpoint(model, trial, metrics)
@@ -252,4 +279,37 @@ class LLaVATrainer(Trainer):
         if getattr(self.args, 'tune_mm_mlp_adapter', False):
             pass
         else:
+            self.model.generation_config.do_sample = True
             super(LLaVATrainer, self)._save(output_dir, state_dict)
+    
+    @torch.no_grad()
+    def evaluate(self, *args, **kwargs):
+        if self.eval_tasks is None:
+            return
+        logger.info("Start run-time evaluation...")
+        start = time.time()        
+        for task_group in self.eval_tasks:
+            if task_group == "vqa_filtered":
+                image_src = "HuggingFaceM4/VQAv2"
+            elif task_group == "winoground_filtered":
+                image_src = "facebook/winoground"
+            else:
+                image_src = None
+            wrapped_model = LlavaLM(
+                pretrained=self.model,
+                tokenizer=self.tokenizer,
+                batch_size=self.args.eval_batch_size,
+                image_src=image_src
+                )
+            with torch.autocast(device_type=self.model.device.type, dtype=self.model.dtype):
+                results = lm_eval.evaluate(
+                    lm=wrapped_model,
+                    task_dict=self.task_group_dict[task_group],
+                    log_samples=True,
+                    limit=self.limit_val_batches,
+                )
+            self.log({
+                f"eval_{task_group}_avg": results['groups'][task_group]['acc,none'],
+                f"eval_{task_group}_std": results['groups'][task_group]['acc_stderr,none'],
+                })
+        logger.info(f"Ending run-time evaluation (duration: {timedelta(seconds=time.time() - start)})")

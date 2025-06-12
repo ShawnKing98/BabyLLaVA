@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 import json
 import logging
 import pathlib
+import random
+from datetime import datetime
 from typing import Dict, Optional, Sequence, List
 
 import torch
@@ -49,6 +51,7 @@ def rank0_print(*args):
 from packaging import version
 IS_TOKENIZER_GREATER_THAN_0_14 = version.parse(tokenizers.__version__) >= version.parse('0.14')
 
+os.environ["WANDB_PROJECT"] = "BabyLLaVA"
 
 @dataclass
 class ModelArguments:
@@ -57,6 +60,7 @@ class ModelArguments:
     freeze_backbone: bool = field(default=False)
     tune_mm_mlp_adapter: bool = field(default=False)
     vision_tower: Optional[str] = field(default=None)
+    tune_vision_tower: Optional[bool] = field(default=False)
     mm_vision_select_layer: Optional[int] = field(default=-1)   # default to the last layer
     pretrain_mm_mlp_adapter: Optional[str] = field(default=None)
     mm_projector_type: Optional[str] = field(default='linear')
@@ -110,6 +114,8 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_bias: str = "none"
     mm_projector_lr: Optional[float] = None
     group_by_modality_length: bool = field(default=False)
+    run_name: Optional[str] = field(default="default")
+    push_to_hub: Optional[bool] = field(default=False)
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
@@ -474,7 +480,7 @@ def preprocess_v1(
                 round_len = len(tokenizer(rou).input_ids)
                 instruction_len = len(tokenizer(parts[0]).input_ids) - 2
 
-            if i != 0 and not tokenizer.legacy and IS_TOKENIZER_GREATER_THAN_0_14:
+            if i != 0 and not getattr(tokenizer, 'legacy', False) and IS_TOKENIZER_GREATER_THAN_0_14:
                 round_len -= 1
                 instruction_len -= 1
 
@@ -663,7 +669,6 @@ class LazySupervisedDataset(Dataset):
                  data_args: DataArguments):
         super(LazySupervisedDataset, self).__init__()
         list_data_dict = json.load(open(data_path, "r"))
-
         rank0_print("Formatting inputs...Skip in lazy mode")
         self.tokenizer = tokenizer
         self.list_data_dict = list_data_dict
@@ -721,6 +726,7 @@ class LazySupervisedDataset(Dataset):
                 self.data_args)
         else:
             sources = copy.deepcopy([e["conversations"] for e in sources])
+        # text preprocess
         data_dict = preprocess(
             sources,
             self.tokenizer,
@@ -787,10 +793,11 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,
 
 def train(attn_implementation=None):
     global local_rank
-
     parser = transformers.HfArgumentParser(
         (ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    training_args.output_dir = os.path.join(training_args.output_dir, training_args.run_name)
+    training_args.run_name = f"{training_args.run_name}_{datetime.now().strftime('%Y-%m-%d-%H-%M')}_{random.randint(0x1000, 0xffff):x}"
     local_rank = training_args.local_rank
     compute_dtype = (torch.float16 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32))
 
@@ -812,7 +819,6 @@ def train(attn_implementation=None):
                 bnb_4bit_quant_type=training_args.quant_type # {'fp4', 'nf4'}
             )
         ))
-
     if model_args.vision_tower is not None:
         if 'mpt' in model_args.model_name_or_path:
             config = transformers.AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
@@ -821,6 +827,16 @@ def train(attn_implementation=None):
                 model_args.model_name_or_path,
                 config=config,
                 cache_dir=training_args.cache_dir,
+                **bnb_model_from_pretrained_args
+            )
+        elif 'gpt2' in model_args.model_name_or_path:
+            print("Initializing BabyGPT backbone...")
+            model = LlavaGPT2ForCausalLM.from_pretrained(
+                model_args.model_name_or_path,
+                # "openai-community/gpt2",
+                cache_dir=training_args.cache_dir,
+                # attn_implementation=attn_implementation,      # Flash Attention 2.0 is not implemented for GPT2 yet
+                torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
                 **bnb_model_from_pretrained_args
             )
         else:
@@ -888,7 +904,7 @@ def train(attn_implementation=None):
             cache_dir=training_args.cache_dir,
             model_max_length=training_args.model_max_length,
             padding_side="right",
-            use_fast=False,
+            use_fast=True,
         )
 
     if model_args.version == "v0":
@@ -910,7 +926,8 @@ def train(attn_implementation=None):
     if model_args.vision_tower is not None:
         model.get_model().initialize_vision_modules(
             model_args=model_args,
-            fsdp=training_args.fsdp
+            fsdp=training_args.fsdp,
+            # local_rank=local_rank,
         )
         
         vision_tower = model.get_vision_tower()
@@ -933,6 +950,14 @@ def train(attn_implementation=None):
         if training_args.freeze_mm_mlp_adapter:
             for p in model.get_model().mm_projector.parameters():
                 p.requires_grad = False
+        
+        model.config.tune_vision_tower = model_args.tune_vision_tower
+        if model_args.tune_vision_tower:
+            model.requires_grad_(False)
+            for p in model.get_model().mm_projector.parameters():
+                p.requires_grad = True
+            for p in model.get_model().vision_tower.parameters():
+                p.requires_grad = True
 
         if training_args.bits in [4, 8]:
             model.get_model().mm_projector.to(dtype=compute_dtype, device=training_args.device)
@@ -958,9 +983,12 @@ def train(attn_implementation=None):
 
     data_module = make_supervised_data_module(tokenizer=tokenizer,
                                               data_args=data_args)
+    # eval_tasks = ['blimp_filtered', 'blimp_supplement', 'vqa_filtered', 'winoground_filtered']
+    eval_tasks = None
     trainer = LLaVATrainer(model=model,
                     tokenizer=tokenizer,
                     args=training_args,
+                    eval_tasks=eval_tasks,
                     **data_module)
 
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):

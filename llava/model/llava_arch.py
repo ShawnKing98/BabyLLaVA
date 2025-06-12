@@ -46,7 +46,7 @@ class LlavaMetaModel:
             vision_tower = vision_tower[0]
         return vision_tower
 
-    def initialize_vision_modules(self, model_args, fsdp=None):
+    def initialize_vision_modules(self, model_args, fsdp=None, **kwargs):
         vision_tower = model_args.vision_tower
         mm_vision_select_layer = model_args.mm_vision_select_layer
         mm_vision_select_feature = model_args.mm_vision_select_feature
@@ -56,8 +56,7 @@ class LlavaMetaModel:
         self.config.mm_vision_tower = vision_tower
 
         if self.get_vision_tower() is None:
-            vision_tower = build_vision_tower(model_args)
-
+            vision_tower = build_vision_tower(model_args, **kwargs)
             if fsdp is not None and len(fsdp) > 0:
                 self.vision_tower = [vision_tower]
             else:

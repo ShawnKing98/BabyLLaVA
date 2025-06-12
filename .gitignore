@@ -9,9 +9,14 @@ dist
 *.log.*
 *.json
 *.jsonl
+*.csv
+*.out
+*.o*
+*.po*
 
 # Data
 !**/alpaca-data-conversation.json
+playground/data
 
 # Editor
 .idea
@@ -22,7 +27,7 @@ dist
 wandb
 output
 
-checkpoints
+*checkpoints*
 ckpts*
 
 .ipynb_checkpoints
