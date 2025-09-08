@@ -4,17 +4,19 @@ import os
 import pathlib
 import argparse
 import torch
-from tokenizers import Toekenizer
+from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from datasets import load_dataset, load_from_disk, Dataset, DatasetDict
 from transformers import DataCollatorForLanguageModeling, TrainingArguments, Trainer, AutoTokenizer, AutoConfig, PreTrainedTokenizerFast
+from transformers import GPT2Config, GPT2LMHeadModel
 from time import sleep
 
 os.environ["WANDB_PROJECT"] = "BabyLM-SAYCam"
 
 def tokenize_function(example):
-    return tokenizer(text=example["text"])
+    result = tokenizer(text=example["text"])
+    return result
 
 def concat(examples):    
     examples["concat_input_ids"]= [list(chain.from_iterable(examples['input_ids']))] # convert chain to list of tokens
@@ -22,7 +24,7 @@ def concat(examples):
     return examples
 
 def chunk(examples):
-    chunk_size = 2048  # TinyLlama context length
+    chunk_size = 2048 if args.arch == "tinyllama" else 1024
     input_ids = examples["concat_input_ids"][0]
     attention_mask = examples["concat_attention_mask"][0]
     input_ids_truncated = []
@@ -47,8 +49,40 @@ if __name__ == "__main__":
     parser.add_argument("--bs", type=int, default=8, help="Batch size per device for training")
     parser.add_argument("--gacc", type=int, default=16, help="Gradient accumulation steps")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Directory to save the model checkpoints")
+    parser.add_argument("--dataset_dir", type=str, default="./playground/data/SAYCam", help="Directory containing the dataset files")
+    parser.add_argument("--cache_dir", type=str, default="./cache_babylm", help="Directory to cache datasets and tokenizers")
+    parser.add_argument("--vocab_file", type=str, default="./playground/data/vocab.json", help="Path to custom vocabulary file (if any)")
     args = parser.parse_args()
     print(args)
+    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(args.cache_dir, exist_ok=True)
+
+    effective_bs = args.bs * args.gacc * torch.cuda.device_count()
+    run_name = f"{args.arch}_lr{args.lr}_bs{effective_bs}_epoch{args.epoch}"
+    training_args = TrainingArguments(
+        output_dir=os.path.join(args.output_dir, run_name),
+        evaluation_strategy="steps",
+        eval_steps=100,
+        num_train_epochs=args.epoch,
+        per_device_train_batch_size=args.bs,
+        per_device_eval_batch_size=args.bs,
+        learning_rate=args.lr,
+        lr_scheduler_type='cosine',
+        warmup_ratio=0.03,
+        adam_beta1=0.9,
+        adam_beta2=0.95,
+        weight_decay=0.1,
+        logging_strategy="steps",
+        logging_steps=10,
+        save_steps=500,
+        save_total_limit=10,
+        report_to='wandb',
+        run_name=run_name,
+        gradient_checkpointing=True,
+        fp16=True,
+        gradient_accumulation_steps=args.gacc,
+        max_grad_norm=1.0,
+    )
 
     # Tokenizer
     if args.arch == "tinyllama":
@@ -56,9 +90,9 @@ if __name__ == "__main__":
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.unk_token = "<unk>"
     elif args.arch == "gpt2":
-        tokenizer_path = "babygpt2_tokenizer/tokenizer.json"
+        tokenizer_path = os.path.join(args.cache_dir, "gpt2_tokenizer.json")
         if not os.path.exists(tokenizer_path):
-            with open("vocab.json") as f:
+            with open(args.vocab_file) as f:
                 vocab = json.load(f)
             word_level = WordLevel(vocab=vocab, unk_token='<unk>')
             tokenizer = Tokenizer(word_level)
@@ -71,17 +105,19 @@ if __name__ == "__main__":
                                             eos_token='<eos>')
 
     # Dataset
-    dataset_path = "SAYCam_tokenized_tinyllama"
+    dataset_path = os.path.join(args.cache_dir, f"SAYCam_tokenized_{args.arch}")
     if not os.path.exists(dataset_path):
         if training_args.process_index == 0:
             # Only main process does the processing and saving
-            with open("./playground/data/SAYCam/train.json") as f:
+            with open(os.path.join(args.dataset_dir, "train.json")) as f:
                 train_raw_data = json.load(f)
             train_ds = Dataset.from_dict({"text": [example["utterance"] for example in train_raw_data["data"]]})
-            with open("./playground/data/SAYCam/val.json") as f:
+            with open(os.path.join(args.dataset_dir, "val.json")) as f:
                 val_raw_data = json.load(f)
             val_ds = Dataset.from_dict({"text": [example["utterance"] for example in val_raw_data["data"]]})
             ds = DatasetDict({'train': train_ds, 'val': val_ds})
+            
+            print(f"Tokenizing with vocab_size: {tokenizer.vocab_size}")
             tokenized_ds = ds.map(tokenize_function, batched=True, remove_columns='text')
             concated_ds = tokenized_ds.map(concat, batched=True, batch_size=1000000, remove_columns=tokenized_ds['train'].column_names, num_proc=1)
             chunked_ds = concated_ds.map(chunk, batched=True, batch_size=1, remove_columns=concated_ds['train'].column_names, num_proc=1)
@@ -110,6 +146,7 @@ if __name__ == "__main__":
     elif args.arch == "gpt2":
         configuration = GPT2Config(
             vocab_size=tokenizer.vocab_size,
+            n_positions = 1024,
             n_embd=256,
             n_layer=8,
             n_head=32,
@@ -123,33 +160,6 @@ if __name__ == "__main__":
         model = GPT2LMHeadModel(configuration)
 
     # Trainer
-    effective_bs = args.bs * args.gacc * torch.cuda.device_count()
-    run_name = f"{args.arch}_lr{args.lr}_bs{effective_bs}_epoch{args.epoch}"
-    training_args = TrainingArguments(
-        output_dir=os.path.join(args.output_dir, run_name),
-        evaluation_strategy="steps",
-        eval_steps=100,
-        num_train_epochs=args.epoch,
-        per_device_train_batch_size=args.bs,
-        per_device_eval_batch_size=args.bs,
-        learning_rate=args.lr,
-        lr_scheduler_type='cosine',
-        warmup_ratio=0.03,
-        adam_beta1=0.9,
-        adam_beta2=0.95,
-        weight_decay=0.1,
-        logging_strategy="steps",
-        logging_steps=10,
-        save_steps=500,
-        save_total_limit=10,
-        report_to='wandb',
-        run_name=run_name,
-        gradient_checkpointing=True,
-        fp16=True,
-        gradient_accumulation_steps=args.gacc,
-        max_grad_norm=1.0,
-    )
-
     trainer = Trainer(
         model=model,
         args=training_args,
