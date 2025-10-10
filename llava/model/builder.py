@@ -161,7 +161,10 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
 
     if hasattr(model.config, "max_sequence_length"):
         context_len = model.config.max_sequence_length
+    elif hasattr(model.config, "n_positions"):
+        context_len = model.config.n_positions
     else:
+        print("Cannot find context length from model config, default to 2048")
         context_len = 2048
 
     return tokenizer, model, image_processor, context_len

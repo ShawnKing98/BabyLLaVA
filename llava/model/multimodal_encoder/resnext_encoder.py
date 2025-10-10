@@ -43,7 +43,17 @@ class ResNeXtVisionTower(torch.nn.Module):
         self.vision_tower.fc = torch.nn.Identity()
 
         # Checkpoint loading
-        if "eminorhan" in self.vision_tower_name:
+        if os.path.exists(self.vision_tower_name):
+            checkpoint = self.vision_tower_name
+            state_dict = torch.load(checkpoint, map_location="cpu")['teacher']
+            print("Take key teacher in local checkpoint dict")
+            # remove `module.` prefix
+            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+            # remove `backbone.` prefix induced by multicrop wrapper
+            state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
+            # remove `encoder.` prefix if it exists
+            state_dict = {k.replace("encoder.", ""): v for k, v in state_dict.items()}
+        elif "eminorhan" in self.vision_tower_name:
             if not os.path.exists(self.vision_tower_name):
                 checkpoint = hf_hub_download(repo_id=self.vision_tower_name, filename=self.vision_tower_name.split('/')[-1] + ".pth")
             else:
@@ -59,15 +69,15 @@ class ResNeXtVisionTower(torch.nn.Module):
             state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
             # remove `encoder.` prefix if it exists
             state_dict = {k.replace("encoder.", ""): v for k, v in state_dict.items()}
-        elif "wkvong" in self.vision_tower_name:
-            sys.path.append("/projectnb/ivc-ml/wsashawn/multimodal-baby")
-            from multimodal.multimodal_lit import MultiModalLitModel
-            if not os.path.exists(self.vision_tower_name):
-                checkpoint = hf_hub_download(repo_id=self.vision_tower_name, filename=self.vision_tower_name.split('/')[-1] + ".ckpt")
-            else:
-                checkpoint = os.path.join(self.vision_tower_name, self.vision_tower_name.split('/')[-1]+".ckpt")
-            state_dict = torch.load(checkpoint, map_location="cpu")['state_dict']
-            state_dict = {k.replace("vision_encoder.model.", ""): v for k, v in state_dict.items() if "vision_encoder.model." in k}
+        # elif "wkvong" in self.vision_tower_name:
+        #     sys.path.append("/projectnb/ivc-ml/wsashawn/multimodal-baby")
+        #     from multimodal.multimodal_lit import MultiModalLitModel
+        #     if not os.path.exists(self.vision_tower_name):
+        #         checkpoint = hf_hub_download(repo_id=self.vision_tower_name, filename=self.vision_tower_name.split('/')[-1] + ".ckpt")
+        #     else:
+        #         checkpoint = os.path.join(self.vision_tower_name, self.vision_tower_name.split('/')[-1]+".ckpt")
+        #     state_dict = torch.load(checkpoint, map_location="cpu")['state_dict']
+        #     state_dict = {k.replace("vision_encoder.model.", ""): v for k, v in state_dict.items() if "vision_encoder.model." in k}
         elif "multimodal-baby/" in self.vision_tower_name:
             assert os.path.exists(self.vision_tower_name), f"local vision backbone {self.vision_tower_name} does not exist"
             checkpoint = os.path.join(self.vision_tower_name, "last.ckpt")

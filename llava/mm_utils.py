@@ -191,7 +191,7 @@ def tokenizer_image_token(prompt, tokenizer, image_token_index=IMAGE_TOKEN_INDEX
     input_ids = []
     offset = 0
     if len(prompt_chunks) > 0 and len(prompt_chunks[0]) > 0 and prompt_chunks[0][0] == tokenizer.bos_token_id:
-        offset = 1
+        offset = 1  # we have a bos token for each of the prompt chunks
         input_ids.append(prompt_chunks[0][0])
 
     for x in insert_separator(prompt_chunks, [image_token_index] * (offset + 1)):
