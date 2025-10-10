@@ -17,7 +17,7 @@ from transformers import GPT2Config, GPT2LMHeadModel
 from time import sleep
 from accelerate import Accelerator
 
-os.environ["WANDB_PROJECT"] = "BabyLM-SAYCam"
+os.environ["WANDB_PROJECT"] = "BabyLLaVA-phase0-language"
 
 def train_BPE_tokenizer(corpus, save_path):
     print(f"Training new BPE tokenizer at {save_path}")
@@ -33,11 +33,11 @@ def train_BPE_tokenizer(corpus, save_path):
     assert tokenizer.token_to_id("<sos>") == 2
     assert tokenizer.token_to_id("<eos>") == 3
     tokenizer.post_processor = TemplateProcessing(
-        single="<sos> $A <eos>",
-        special_tokens=[("<sos>", 2), ("<eos>", 3)]
+        single="<sos> $A",
+        special_tokens=[("<sos>", 2)]
     )
     tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, 
-                                        unk_token='<unk>', 
+                                        unk_token='<unk>',
                                         pad_token='<pad>',
                                         bos_token='<sos>',
                                         eos_token='<eos>',
@@ -46,7 +46,15 @@ def train_BPE_tokenizer(corpus, save_path):
     return tokenizer
 
 def tokenize_function(example):
+    # if args.tokenizer == "tinyllama":
+    # Temporarily change post_processor to append <eos> token to each sentence
+    original_post_processor = tokenizer._tokenizer.post_processor
+    tokenizer._tokenizer.post_processor = TemplateProcessing(
+        single="<sos> $A <eos>",
+        special_tokens=[("<sos>", 2), ("<eos>", 3)]
+    )
     result = tokenizer(text=example["text"])
+    tokenizer._tokenizer.post_processor = original_post_processor
     return result
 
 def concat(examples):    
@@ -94,7 +102,7 @@ if __name__ == "__main__":
     accelerator = Accelerator()
 
     effective_bs = args.bs * args.gacc * torch.cuda.device_count()
-    run_name = f"{args.arch}_lr{args.lr}_bs{effective_bs}_epoch{args.epoch}"
+    run_name = f"{args.arch}_lr{args.lr}_bs{effective_bs}_epoch{args.epoch}_window{args.ctx_len}"
     training_args = TrainingArguments(
         output_dir=os.path.join(args.output_dir, run_name),
         evaluation_strategy="steps",
@@ -137,7 +145,7 @@ if __name__ == "__main__":
                 word_level = WordLevel(vocab=vocab, unk_token='<unk>')
                 tokenizer = Tokenizer(word_level)
                 tokenizer.pre_tokenizer = Whitespace()
-                tokenizer.save(tokenizer_path)
+                # tokenizer.save(tokenizer_path)
                 tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, 
                                                     unk_token='<unk>', 
                                                     pad_token='<pad>',
