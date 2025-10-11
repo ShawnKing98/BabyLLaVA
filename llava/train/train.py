@@ -487,12 +487,11 @@ def preprocess_v1(
                 # don't take bos token into consideration except for the first round (i == 0)
                 round_len -= 1
                 instruction_len -= 1
-
             target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
 
             cur_len += round_len
         target[cur_len:] = IGNORE_INDEX
-
+        target[target == tokenizer.unk_token_id] = IGNORE_INDEX
         if cur_len < tokenizer.model_max_length:
             if cur_len != total_len:
                 target[:] = IGNORE_INDEX
@@ -924,7 +923,7 @@ def train(attn_implementation=None):
     elif model_args.version == "v0.5":
         tokenizer.pad_token = tokenizer.unk_token
     else:
-        tokenizer.pad_token = tokenizer.unk_token
+        # tokenizer.pad_token = tokenizer.unk_token     # The original LLaVA has this. I don't know what this is for, gotta be cautious.
         if model_args.version in conversation_lib.conv_templates:
             conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version]
         else:
