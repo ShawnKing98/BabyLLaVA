@@ -299,6 +299,28 @@ conv_llava_plain = Conversation(
     sep2=""
 )
 
+conv_babyllava_plain = Conversation(
+    system="",
+    roles=("", ""),
+    messages=(
+    ),
+    offset=0,
+    sep_style=SeparatorStyle.PLAIN,
+    sep=" ",
+    sep2="<eos>"
+)
+
+conv_babyllava_v1 = Conversation(
+    system="",
+    roles=("USER", "ASSISTANT"),
+    version="v1",
+    messages=(),
+    offset=0,
+    sep_style=SeparatorStyle.TWO,
+    sep=" ",
+    sep2="<eos>",
+)
+
 conv_llava_v0 = Conversation(
     system="A chat between a curious human and an artificial intelligence assistant. "
            "The assistant gives helpful, detailed, and polite answers to the human's questions.",
@@ -382,6 +404,8 @@ conv_templates = {
     "mistral_direct": conv_chatml_direct,
 
     "plain": conv_llava_plain,
+    "baby_plain": conv_babyllava_plain,
+    "baby_v1": conv_babyllava_v1,
     "v0_plain": conv_llava_plain,
     "llava_v0": conv_llava_v0,
     "v0_mmtag": conv_llava_v0_mmtag,
@@ -395,6 +419,7 @@ conv_templates = {
 
 if __name__ == "__main__":
     conv = default_conversation.copy()
+    conv = conv_babyllava_plain.copy()
     conv.append_message(conv.roles[0], "Answer my question!")
     conv.append_message(conv.roles[1], "Sure, the answer is 42.")
     print(conv.get_prompt())

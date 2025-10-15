@@ -159,7 +159,9 @@ class LlavaMetaForCausalLM(ABC):
             mm_patch_merge_type = getattr(self.config, 'mm_patch_merge_type', 'flat')
             image_aspect_ratio = getattr(self.config, 'image_aspect_ratio', 'square')
             if mm_patch_merge_type == 'flat':
-                image_features = [x.flatten(0, 1) for x in image_features]
+                image_features = torch.cat(image_features, dim=0)
+                # image_features = [x.flatten(0, 1) for x in image_features]
+                # image_features = torch.concat([x.flatten(0, 1) for x in image_features], dim=0)
             elif mm_patch_merge_type.startswith('spatial'):
                 new_image_features = []
                 for image_idx, image_feature in enumerate(image_features):

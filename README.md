@@ -19,14 +19,8 @@ This is the codebase of BabyLLaVA model series introduced in BabyVLM, adapted fr
 Install this package by cloning the repository and running the following command:
 
 ```bash
-git clone https://github.com/ShawnKing98/babylmms-eval.git
-cd babylmms-eval
-pip install -e .
-```
-
-Optionally, install additional packages for training BabyLLaVA:
-
-```bash
+git clone git@github.com:ShawnKing98/BabyLLaVA.git
+cd BabyLLaVA
 pip install -e ".[train]"
 pip install flash-attn --no-build-isolation
 ```

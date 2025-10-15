@@ -12,9 +12,9 @@ def build_vision_tower(vision_tower_cfg, **kwargs):
             return CLIPVisionTowerS2(vision_tower, args=vision_tower_cfg, **kwargs)
         else:
             return CLIPVisionTower(vision_tower, args=vision_tower_cfg, **kwargs)
-    elif "dino_sfp_resnext50" in vision_tower or vision_tower.startswith("wkvong/"):
+    elif "resnext50" in vision_tower or vision_tower.startswith("wkvong/"):
         return ResNeXtVisionTower(vision_tower, args=vision_tower_cfg, **kwargs)
-    elif "dino_say_vitl16" in vision_tower:
+    elif "vitl16" in vision_tower:
         return ViTVisionTower(vision_tower, args=vision_tower_cfg, **kwargs)
 
     raise ValueError(f'Unknown vision tower: {vision_tower}')

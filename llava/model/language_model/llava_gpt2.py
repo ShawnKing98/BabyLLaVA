@@ -31,24 +31,24 @@ class LlavaGPT2Config(GPT2Config):
     model_type = "llava_gpt2"
 
 
-class LlavaGPT2Tokenizer(PreTrainedTokenizerFast):
-    def __call__(
-        self,
-        text = None,
-        add_bos_eos: bool = True,
-        *args, **kwargs):
+# class LlavaGPT2Tokenizer(PreTrainedTokenizerFast):
+#     def __call__(
+#         self,
+#         text = None,
+#         add_bos_eos: bool = True,
+#         *args, **kwargs):
         
-        def add_bos_eos_tokens(input_text):
-            if isinstance(input_text, str):
-                return f"<sos> {input_text} <eos>"
-            elif isinstance(input_text, (list, tuple)):
-                return [f"<sos> {t} <eos>" if isinstance(t, str) else t for t in input_text]
-            return input_text
+#         def add_bos_eos_tokens(input_text):
+#             if isinstance(input_text, str):
+#                 return f"<sos> {input_text} <eos>"
+#             elif isinstance(input_text, (list, tuple)):
+#                 return [f"<sos> {t} <eos>" if isinstance(t, str) else t for t in input_text]
+#             return input_text
         
-        if add_bos_eos and text is not None:
-            text = add_bos_eos_tokens(text)
+#         if add_bos_eos and text is not None:
+#             text = add_bos_eos_tokens(text)
         
-        return super().__call__(text, *args, **kwargs)
+#         return super().__call__(text, *args, **kwargs)
 
 
 class LlavaGPT2Model(LlavaMetaModel, GPT2Model):
@@ -194,4 +194,4 @@ class LlavaGPT2ForCausalLM(GPT2LMHeadModel, LlavaMetaForCausalLM):
 
 AutoConfig.register("llava_gpt2", LlavaGPT2Config)
 AutoModelForCausalLM.register(LlavaGPT2Config, LlavaGPT2ForCausalLM)
-AutoTokenizer.register(LlavaGPT2Config, None, LlavaGPT2Tokenizer)
+# AutoTokenizer.register(LlavaGPT2Config, None, LlavaGPT2Tokenizer)
